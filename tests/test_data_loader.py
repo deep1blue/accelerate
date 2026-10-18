@@ -700,6 +700,33 @@ class DataLoaderTester(AccelerateTestCase):
         test_sampler_epoch(DataLoaderShard)
         test_sampler_epoch(DataLoaderDispatcher)
 
+    def test_skip_first_batches_advances_source_epoch(self):
+        # Regression test: once the loader returned by `skip_first_batches` has been exhausted, the original loader
+        # must continue with the next epoch instead of replaying the resumed one.
+        def make_dataloader(dispatch_batches):
+            set_seed(42)
+            dataloader = DataLoader(list(range(16)), batch_size=4, shuffle=True)
+            return prepare_data_loader(
+                dataloader,
+                device=torch.device("cpu"),
+                num_processes=1,
+                process_index=0,
+                put_on_device=dispatch_batches,
+                use_seedable_sampler=True,
+                dispatch_batches=dispatch_batches,
+            )
+
+        for dispatch_batches in (False, True):
+            reference = make_dataloader(dispatch_batches)
+            epoch_0 = [batch.tolist() for batch in reference]
+            epoch_1 = [batch.tolist() for batch in reference]
+            assert epoch_0 != epoch_1
+
+            resumed = make_dataloader(dispatch_batches)
+            skipped = skip_first_batches(resumed, num_batches=2)
+            assert [batch.tolist() for batch in skipped] == epoch_0[2:]
+            assert [batch.tolist() for batch in resumed] == epoch_1
+
     def test_skip_first_batches_preserves_configuration(self):
         dataset = list(range(16))
         for dataloader_cls in (DataLoaderShard, DataLoaderDispatcher):

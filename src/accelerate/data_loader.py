@@ -468,6 +468,14 @@ class DataLoaderAdapter:
     def __len__(self):
         return len(self.base_dataloader)
 
+    def _increment_iteration(self):
+        self.iteration += 1
+        # A loader built by `skip_first_batches` completes the epoch on behalf of the loader it was created from, so
+        # that one must carry on with the next epoch instead of replaying this one.
+        epoch_source = getattr(self, "_epoch_source", None)
+        if epoch_source is not None:
+            epoch_source.iteration = self.iteration
+
     def adjust_state_dict_for_prefetch(self):
         """
         Adjusts the state dict for prefetching. Natively, this will adjust all of the iters yielded keys in
@@ -608,7 +616,7 @@ class DataLoaderShard(DataLoaderAdapter, DataLoaderStateMixin):
                     yield current_batch
                 break
 
-        self.iteration += 1
+        self._increment_iteration()
         self.end()
 
     def __reduce__(self):
@@ -945,7 +953,7 @@ class DataLoaderDispatcher(DataLoaderAdapter, DataLoaderStateMixin):
             if batch_index >= self.skip_batches:
                 yield batch
             batch_index += 1
-        self.iteration += 1
+        self._increment_iteration()
         self.end()
 
     def set_epoch(self, epoch: int):
@@ -1434,6 +1442,7 @@ def skip_first_batches(dataloader, num_batches=0):
         kwargs["drop_last"] = dataloader.drop_last
         kwargs["batch_size"] = dataloader.batch_size
 
+    source_dataloader = dataloader
     if isinstance(dataloader, DataLoaderDispatcher):
         if new_batch_sampler is None:
             # Need to manually skip batches in the dataloader
@@ -1449,6 +1458,7 @@ def skip_first_batches(dataloader, num_batches=0):
             iteration=dataloader.iteration,
             **kwargs,
         )
+        dataloader._epoch_source = source_dataloader
     elif isinstance(dataloader, DataLoaderShard):
         if new_batch_sampler is None:
             # Need to manually skip batches in the dataloader
@@ -1469,6 +1479,7 @@ def skip_first_batches(dataloader, num_batches=0):
             iteration=dataloader.iteration,
             **kwargs,
         )
+        dataloader._epoch_source = source_dataloader
     else:
         if new_batch_sampler is None:
             # Need to manually skip batches in the dataloader
